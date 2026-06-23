@@ -16,6 +16,10 @@ This is not framework-specific. It reproduces with a plain
 vDOM interop bridge (`createSSRApp(...).use(vaporInteropPlugin)`). Any vapor SSR
 setup is affected, pure-vapor (Nuxt-style) and vapor-island (Astro-style) alike.
 
+It surfaced while adding Vapor support to an Astro project. Reducing it to the
+pure-vapor case here showed the failure is in vapor SSR hydration itself, not in
+Astro.
+
 - `vue@3.6.0-beta.16` (`@vue/runtime-vapor@3.6.0-beta.16`)
 - `vite@8.1.0`, `@vitejs/plugin-vue@6.0.7`, node 24
 

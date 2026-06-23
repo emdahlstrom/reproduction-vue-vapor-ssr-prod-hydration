@@ -60,11 +60,22 @@ interop path that vapor SSR uses — `createSSRApp({ render: () => h(Counter) })
 ## The trigger: inline vs non-inline compilation
 
 The only difference between the broken and working builds is how
-`@vitejs/plugin-vue` compiles the template. With Vue prod-devtools enabled
-(`features: { prodDevtools: true }`, or `__VUE_PROD_DEVTOOLS__`), the SFC is
-compiled **non-inline** — a separate `render()` function instead of inlining the
-template into `setup()`. This is what an **Astro** production build emits for Vue
-islands, which is how this was first hit.
+`@vitejs/plugin-vue` compiles the template: **inline** (the template is compiled
+into `setup()`) vs **non-inline** (a separate `render()` function). The plugin
+compiles inline only when `isUseInlineTemplate` is true, i.e. when
+`!devServer && !devToolsEnabled && <script setup> && no template src`.
+
+This repro forces **non-inline** with `features: { prodDevtools: true }`
+(`vite.config.ts`) — the cleanest self-contained lever, since `prodDevtools`
+flips `devToolsEnabled`.
+
+An **Astro** production build emits the **same non-inline output** for Vue
+islands, but via a *different* switch: during `astro build`, `@vitejs/plugin-vue`
+sees `options.devServer` as truthy, so `isUseInlineTemplate` is false. (It is
+**not** `__VUE_PROD_DEVTOOLS__` — that resolves to `false` in Astro.) Either way
+the compiled output is non-inline, and the production Vue runtime fails to
+hydrate it. The lever differs; the broken artifact and the runtime defect are
+identical.
 
 Compiled output (minified), production build:
 
@@ -92,21 +103,33 @@ setup(e) {
 }
 ```
 
-## Observed mechanism
+## Mechanism
 
-In the non-inline production build, during hydration the template helper returns
-a **freshly-created node**, not the server-rendered one. `$evtclick` is set on
-that detached node, while the server-rendered `<button>` (still in the document)
-gets no handler — so the click does nothing. Concretely, after hydration:
+Under the **production** runtime, the non-inline vapor component's `render()`
+function is **never invoked during hydration**. Instrumenting the served bundle
+(an `Object.prototype.$evtclick` setter + logging inside the compiled render and
+the runtime's `template()` helper) shows:
 
-- `document.querySelector('#app button')` is the original SSR node (unchanged), and
-- that node has **no `$evtclick`** property (the inline build gives it one).
+- **non-inline + prod**: only module-eval runs (`delegateEvents("click")`); the
+  separate `render()` is **never entered**, and **zero** `$evtclick` assignments
+  happen on any node. The component is fully inert — no handler, no reactive
+  update. The server `<button>` is untouched and has no `$evtclick`.
+- **inline + prod**: `setup()` runs during hydration, the template helper adopts
+  the live SSR `<button>`, and `$evtclick` is set on that live node → interactive.
+- **non-inline + dev** (control): the same separate `render()` **is** entered →
+  handler attached → interactive.
 
-The development runtime hydrates the same non-inline output correctly, so the
-divergence is between the dev and prod **runtime** builds on the **non-inline**
-code path. (We did not trace the exact `__DEV__`-gated branch in the runtime —
-the prod build is minified — so the internal cause is left to the maintainer;
-everything above is observed, not inferred.)
+So the divergence is purely `__DEV__`-gated in `@vue/runtime-vapor`'s
+vDOM-interop hydration path: with `__DEV__=false` it skips invoking a non-inline
+vapor component's render during hydration. (We did not pinpoint the exact runtime
+branch; everything above is observed via instrumentation, not inferred.)
+
+> This was validated by an adversarial panel that tried to break it: it is **not**
+> a minification/bundler artifact (reproduces unminified), **not** a hydration
+> race or measurement error (10s waits, 10 clicks, 5 dispatch mechanisms — render
+> never runs), and **not** the `__VUE_PROD_DEVTOOLS__` runtime flag (a 2×2
+> codegen×flag factorial shows interactivity tracks the codegen, not the flag).
+> It also reproduces in the real Astro build, where compiling inline fixes it.
 
 ## Ruled out (to save investigation time)
 

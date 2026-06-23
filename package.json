@@ -1,5 +1,6 @@
 {
   "name": "vue-vapor-ssr-prod-hydration",
+  "description": "Minimal reproduction: a Vue 3.6 Vapor SSR component is dead after hydration under the production runtime when compiled non-inline.",
   "private": true,
   "type": "module",
   "version": "0.0.0",

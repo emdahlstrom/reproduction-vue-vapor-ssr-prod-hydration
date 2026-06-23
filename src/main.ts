@@ -1,9 +1,9 @@
-import { createSSRApp, h, vaporInteropPlugin } from 'vue'
+import { createVaporSSRApp } from 'vue'
 import Counter from './Counter.vue'
 
-// Hydrate the server-rendered markup through the vDOM interop path that vapor
-// SSR uses. On a non-inline production build, Counter's render is never invoked
-// here, so the button never gets its click handler and stays inert.
-const app = createSSRApp({ render: () => h(Counter) })
-app.use(vaporInteropPlugin)
-app.mount('#app')
+// Pure vapor SSR hydration: no vDOM host, no vaporInteropPlugin. On a non-inline
+// production build, the component's render is not effective after hydration, so
+// the button never gets its click handler and stays inert. The same failure also
+// happens through the vDOM-interop bridge (createSSRApp + vaporInteropPlugin), so
+// it is not specific to interop.
+createVaporSSRApp(Counter).mount('#app')

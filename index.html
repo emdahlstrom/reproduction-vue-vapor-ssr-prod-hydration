@@ -2,7 +2,7 @@
 <html lang="en">
   <head><meta charset="UTF-8" /><title>Vue Vapor SSR prod-hydration repro</title></head>
   <body>
-    <div id="app"><button type="button">count is 0</button></div>
+    <div id="app"><div><button type="button">count is 0</button><section class="todo"><p class="sum" data-testid="sum">0 of 3 checked</p><ul><!--[--><li><label><input type="checkbox"><span>alpha</span></label><button type="button" class="self">self 0</button></li><li><label><input type="checkbox"><span>beta</span></label><button type="button" class="self">self 0</button></li><li><label><input type="checkbox"><span>gamma</span></label><button type="button" class="self">self 0</button></li><!--]--></ul></section></div></div>
     <script type="module" src="/src/entry-client.ts"></script>
   </body>
 </html>

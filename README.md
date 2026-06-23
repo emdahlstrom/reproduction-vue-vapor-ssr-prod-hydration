@@ -24,38 +24,50 @@ pnpm verify     # builds 3 variants, hydrates each in headless Chromium, asserts
 Expected output:
 
 ```
-✓ NON-INLINE compile (Astro-style) + PROD runtime  [the bug]
-    "count is 0" -> "count is 0"  | $evtclick=undefined | interactive=false
-✓ INLINE compile (default vite build) + PROD runtime
-    "count is 0" -> "count is 1"  | $evtclick=function | interactive=true
-✓ NON-INLINE compile + DEV runtime (control)
-    "count is 0" -> "count is 1"  | $evtclick=function | interactive=true
+✓ NON-INLINE + PROD runtime  [the bug]
+    standalone counter:        count is 0 -> count is 0          (reactive=false)
+    interacted child OWN state: self 0 -> self 0                 (reactive=false)
+    parent SUM (cross-comp):    0 of 3 checked -> 0 of 3 checked (reactive=false)
+    checkbox native checked=true  <- flips even when dead
+✓ INLINE + PROD runtime
+    ... all reactive=true ...
+✓ NON-INLINE + DEV runtime (control)
+    ... all reactive=true ...
 ```
 
 Or see it by hand (the repo is configured non-inline, mirroring an Astro build):
 
 ```bash
-pnpm dev                      # open the page, click → works (dev runtime)
-pnpm build && pnpm preview    # open the page, click → DEAD (prod runtime)
+pnpm dev                      # open the page, interact → works (dev runtime)
+pnpm build && pnpm preview    # open the page, interact → DEAD (prod runtime)
 ```
 
-## What the component is
+## What the page exercises
 
-`src/Counter.vue` — the smallest vapor component with state + a handler:
+Three reactive paths, so the failure can't be mistaken for a local quirk
+(`src/app.ts` renders both components):
 
-```vue
-<script setup vapor lang="ts">
-import { ref } from 'vue'
-const count = ref(0)
-</script>
-<template>
-  <button type="button" @click="count++">count is {{ count }}</button>
-</template>
-```
+1. **`src/Counter.vue`** — a standalone vapor component's own state
+   (`@click="count++"`).
+2. **`src/TodoList.vue` + `src/TodoItem.vue`** — a parent that derives a **sum**
+   (`computed` "N of 3 checked") from child checkboxes; each child also has its
+   **own** reactive counter and emits `toggle` upward. This is the realistic
+   cross-component case.
+
+Under the bug, **all three are dead** — counter, the interacted child's own
+state, and the parent sum. The controls flip all three.
+
+> **The deceptive part.** A checkbox `@change="emit('toggle')"` still toggles
+> its `checked` box **natively in the browser** even when the handler is dead.
+> So it *looks* like "the component I clicked changed," while the sum it feeds
+> never updates and no reactivity ran at all. That mismatch — interacted thing
+> appears to change, the aggregate doesn't — is the original real-world symptom;
+> it's not a separate cross-component bug, it's the whole island being inert with
+> the native checkbox masking it.
 
 SSR via `@vue/server-renderer` `renderToString`; client hydration via the vDOM
-interop path that vapor SSR uses — `createSSRApp({ render: () => h(Counter) })`
-`.use(vaporInteropPlugin).mount('#app')` (see `src/entry-*.ts`).
+interop path vapor SSR uses — `createSSRApp(Root).use(vaporInteropPlugin)`
+`.mount('#app')` (see `src/entry-*.ts`).
 
 ## The trigger: inline vs non-inline compilation
 

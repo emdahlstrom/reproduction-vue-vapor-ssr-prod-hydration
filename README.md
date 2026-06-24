@@ -39,7 +39,7 @@ node confirm-fix.mjs # patches the runtime branch, shows both surfaces go intera
 
 Expected `pnpm verify` output:
 
-```
+```text
 ✓ non-inline + prod, hydration  [the bug]: "count is 0" -> "count is 0"  $evtclick=undefined  reactive=false
 ✓ inline + prod, hydration: "count is 0" -> "count is 1"  $evtclick=function  reactive=true
 ✓ non-inline + dev, hydration (control): "count is 0" -> "count is 1"  $evtclick=function  reactive=true
@@ -48,7 +48,7 @@ Expected `pnpm verify` output:
 
 Expected `node confirm-fix.mjs` output:
 
-```
+```text
 ✓ hydration  (createVaporSSRApp, pre-rendered button)
     unpatched: interactive=false $evtclick=undefined
     patched:   interactive=true $evtclick=function

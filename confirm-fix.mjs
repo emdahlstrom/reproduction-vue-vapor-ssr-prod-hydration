@@ -70,10 +70,14 @@ async function buildProdUnminified(outDir, input) {
   })
 }
 
+// Vite can emit several JS chunks; pick the one that actually holds
+// handleSetupResult rather than assuming it is the first file.
 function bundleFile(outDir) {
   const dir = join(outDir, 'assets')
-  const name = readdirSync(dir).find((n) => n.endsWith('.js'))
-  if (!name) throw new Error(`no built bundle in ${dir}`)
+  const name = readdirSync(dir)
+    .filter((n) => n.endsWith('.js'))
+    .find((n) => STRIPPED.test(readFileSync(join(dir, n), 'utf8')))
+  if (!name) throw new Error(`no bundle under ${dir} contains handleSetupResult`)
   return join(dir, name)
 }
 
@@ -121,7 +125,7 @@ for (const s of surfaces) {
   const before = await run(outDir, s.page)
   patch(bundleFile(outDir))
   const after = await run(outDir, s.page)
-  const pass = before.interactive === false && after.interactive === true
+  const pass = before.interactive === false && after.interactive === true && !after.error
   ok &&= pass
   console.log(`${pass ? '✓' : '✗'} ${s.label}`)
   console.log(`    unpatched: interactive=${before.interactive} $evtclick=${before.evtclick}${before.error ? ` error=${before.error.split('\n')[0]}` : ''}`)

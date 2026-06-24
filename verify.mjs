@@ -90,8 +90,8 @@ async function probe(url) {
 
 const variants = [
   { label: 'non-inline + prod, hydration  [the bug]', outDir: 'dist-noninline', opts: { features: { prodDevtools: true } }, dev: false, page: '/', ok: (r) => r.reactive === false && r.evtclick === 'undefined' && !r.error },
-  { label: 'inline + prod, hydration', outDir: 'dist-inline', opts: {}, dev: false, page: '/', ok: (r) => r.reactive === true },
-  { label: 'non-inline + dev, hydration (control)', outDir: 'dist-noninline-dev', opts: { features: { prodDevtools: true } }, dev: true, page: '/', ok: (r) => r.reactive === true },
+  { label: 'inline + prod, hydration', outDir: 'dist-inline', opts: {}, dev: false, page: '/', ok: (r) => r.reactive === true && r.evtclick === 'function' && !r.error },
+  { label: 'non-inline + dev, hydration (control)', outDir: 'dist-noninline-dev', opts: { features: { prodDevtools: true } }, dev: true, page: '/', ok: (r) => r.reactive === true && r.evtclick === 'function' && !r.error },
   { label: 'non-inline + prod, fresh mount [crashes, no SSR]', outDir: 'dist-noninline-mount', opts: { features: { prodDevtools: true } }, dev: false, input: 'mount.html', page: '/mount.html', ok: (r) => r.before === null && /reading 'anchor'/.test(r.error || '') },
 ]
 

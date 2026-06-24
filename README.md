@@ -16,6 +16,12 @@ This is not framework-specific. It reproduces with a plain
 vDOM interop bridge (`createSSRApp(...).use(vaporInteropPlugin)`). Any vapor SSR
 setup is affected, pure-vapor (Nuxt-style) and vapor-island (Astro-style) alike.
 
+It is not even hydration-specific. The same component mounted fresh with
+`createVaporApp(Counter).mount('#app')` — no SSR markup, no hydration — fails
+harder: it throws `TypeError: Cannot read properties of undefined (reading
+'anchor')` and no button renders. Hydration (inert) and fresh mount (crash) are
+two surfaces of one root cause in `handleSetupResult` (below).
+
 It surfaced while adding Vapor support to an Astro project. Reducing it to the
 pure-vapor case here showed the failure is in vapor SSR hydration itself, not in
 Astro.
@@ -27,15 +33,28 @@ Astro.
 
 ```bash
 pnpm install
-pnpm verify     # builds 3 variants, hydrates each in headless Chromium, asserts
+pnpm verify          # builds 4 variants, drives each in headless Chromium, asserts
+node confirm-fix.mjs # patches the runtime branch, shows both surfaces go interactive
 ```
 
-Expected output:
+Expected `pnpm verify` output:
 
 ```
-✓ non-inline + prod runtime  [the bug]: "count is 0" -> "count is 0"  $evtclick=undefined  reactive=false
-✓ inline + prod runtime: "count is 0" -> "count is 1"  $evtclick=function  reactive=true
-✓ non-inline + dev runtime (control): "count is 0" -> "count is 1"  $evtclick=function  reactive=true
+✓ non-inline + prod, hydration  [the bug]: "count is 0" -> "count is 0"  $evtclick=undefined  reactive=false
+✓ inline + prod, hydration: "count is 0" -> "count is 1"  $evtclick=function  reactive=true
+✓ non-inline + dev, hydration (control): "count is 0" -> "count is 1"  $evtclick=function  reactive=true
+✓ non-inline + prod, fresh mount [crashes, no SSR]: "null" -> "null"  $evtclick=null  reactive=false  error=TypeError: Cannot read properties of undefined (reading 'anchor')
+```
+
+Expected `node confirm-fix.mjs` output:
+
+```
+✓ hydration  (createVaporSSRApp, pre-rendered button)
+    unpatched: interactive=false $evtclick=undefined
+    patched:   interactive=true $evtclick=function
+✓ fresh mount (createVaporApp, empty #app)
+    unpatched: interactive=false $evtclick=null error=TypeError: Cannot read properties of undefined (reading 'anchor')
+    patched:   interactive=true $evtclick=function
 ```
 
 By hand:
@@ -52,7 +71,8 @@ its own `ref` on click. `index.html` holds its server-rendered output (exactly
 what `@vue/server-renderer` `renderToString` emits for it). `src/main.ts`
 hydrates it with `createVaporSSRApp(Counter).mount('#app')`, pure vapor with no
 vDOM host. Vue reports no hydration mismatch, so the markup matches what the
-client renders.
+client renders. `mount.html` and `src/mount.ts` mount the same component fresh
+with `createVaporApp` into an empty `#app` (no SSR) — the crash surface.
 
 Under the bug the button is inert: clicking does nothing and `button.$evtclick`
 is `undefined`. The dev runtime and the inline build both make it interactive.
@@ -126,17 +146,59 @@ the same end state: the SSR node is adopted (no mismatch) but stays inert, with
 - non-inline + dev (control): the same non-inline output hydrates and is
   interactive.
 
-The divergence is `__DEV__`-gated in `@vue/runtime-vapor`'s hydration path: with
-`__DEV__=false` a non-inline vapor component's render is not applied during
-hydration. We did not pinpoint the exact runtime branch; the above is observed
-via instrumentation, not inferred.
+The divergence is one `__DEV__`-gated branch in `@vue/runtime-vapor`'s
+`handleSetupResult`, confirmed by reading the runtime and by patching it (below).
 
-An adversarial review tried to break this finding and could not. It is not a
-minification or bundler artifact (it reproduces unminified), not a hydration race
-or measurement error (10s waits, 10 clicks, and 5 dispatch mechanisms, with the
-render still not taking effect), and not the `__VUE_PROD_DEVTOOLS__` runtime flag
-(a 2×2 codegen-by-flag factorial shows interactivity tracks the codegen, not the
-flag).
+## Root cause
+
+A non-inline `setup()` returns the bindings object (`{ count }`), not a DOM
+block, and the template compiles to a separate `render()`. The runtime wires
+bindings → render only through `devRender()`, which sits inside
+`if (__DEV__ && !isBlock(setupResult)) { … }`. With `__DEV__=false` that whole
+branch is dead-code-eliminated, leaving only:
+
+```js
+// @vue/runtime-vapor handleSetupResult, production
+if (setupResult === EMPTY_OBJ && component.render)
+  instance.block = callRender(component.render, instance, setupResult)
+else
+  instance.block = setupResult   // ← the bindings object, not a block
+```
+
+`setupResult` is the non-empty `{ count }`, so the first branch is dead and the
+bindings object is assigned as `instance.block`; `render()` is never called.
+Inline builds escape this because `setup()` returns `EMPTY_OBJ` and hits the
+first branch. The deepest cause is that the `isBlock(setupResult)` discriminator
+— the only thing that separates "setup returned a DOM block" from "setup returned
+bindings + a separate render" — lives inside the `__DEV__` gate, so production
+cannot tell them apart.
+
+`mountComponent` then forks on `if (!isHydrating)`: hydration skips the insert and
+leaves the SSR `<button>` in place but inert; a fresh mount inserts the bad block,
+`insert()` reads `.anchor` off the bindings object, and it throws. One bug, two
+surfaces.
+
+Restoring the discriminator outside the `__DEV__` gate fixes both:
+
+```js
+else if (!isBlock(setupResult) && component.render) {
+  instance.setupState = proxyRefs(setupResult)
+  instance.block = callRender(component.render, instance, instance.setupState)
+}
+```
+
+`node confirm-fix.mjs` patches exactly this into the production bundle and shows
+both the inert hydrated button and the fresh-mount crash become interactive,
+which confirms the cause rather than only describing the symptom. The branch plus
+`callRender` removes the crash and wires the click handler; the `proxyRefs` step
+is independently needed for text reactivity.
+
+Two rounds of adversarial review tried to break this finding and could not. It
+is not a minification or bundler artifact (it reproduces unminified), not a
+hydration race or measurement error (10s waits, 10 clicks, and 5 dispatch
+mechanisms, with the render still not taking effect), and not the
+`__VUE_PROD_DEVTOOLS__` runtime flag (a 2×2 codegen-by-flag factorial shows
+interactivity tracks the codegen, not the flag).
 
 ## Ruled out
 

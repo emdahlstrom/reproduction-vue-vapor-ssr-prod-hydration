@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Vue Vapor fresh-mount (no SSR) repro</title>
+  </head>
+  <body>
+    <!-- Empty container: no server-rendered markup, no hydration. src/mount.ts
+         mounts <Counter/> fresh with createVaporApp. On a non-inline production
+         build this throws instead of rendering. -->
+    <div id="app"></div>
+    <script type="module" src="/src/mount.ts"></script>
+  </body>
+</html>

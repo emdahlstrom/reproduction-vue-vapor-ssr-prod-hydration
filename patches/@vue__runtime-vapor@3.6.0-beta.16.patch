@@ -1,0 +1,14 @@
+diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.js
+--- a/dist/runtime-vapor.esm-bundler.js
++++ b/dist/runtime-vapor.esm-bundler.js
+@@ -2940,6 +2940,10 @@
+ 		devRender(instance);
+ 	}
+ 	else if (setupResult === EMPTY_OBJ && component.render) instance.block = callRender(component.render, instance, setupResult);
++	else if (!isBlock(setupResult) && component.render) {
++		instance.setupState = proxyRefs(setupResult);
++		instance.block = callRender(component.render, instance, instance.setupState);
++	}
+ 	else instance.block = setupResult;
+ 	if (instance.hasFallthrough && component.inheritAttrs !== false && Object.keys(instance.attrs).length) {
+ 		const getFallthroughAttrs = isFunction(component) && !(isTransitionEnabled ? isVaporTransition(component) : false) ? () => getFunctionalFallthrough(instance.attrs) : () => instance.attrs;

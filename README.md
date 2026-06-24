@@ -187,11 +187,12 @@ else if (!isBlock(setupResult) && component.render) {
 }
 ```
 
-`node confirm-fix.mjs` patches exactly this into the production bundle and shows
-both the inert hydrated button and the fresh-mount crash become interactive,
-which confirms the cause rather than only describing the symptom. The branch plus
-`callRender` removes the crash and wires the click handler; the `proxyRefs` step
-is independently needed for text reactivity.
+`node confirm-fix.mjs` applies exactly this to the `@vue/runtime-vapor` source
+(backing up and restoring `node_modules`), rebuilds, and shows both the inert
+hydrated button and the fresh-mount crash become interactive — confirming the
+cause rather than only describing the symptom. The branch plus `callRender`
+removes the crash and wires the click handler; the `proxyRefs` step is
+independently needed for text reactivity.
 
 Two rounds of adversarial review tried to break this finding and could not. It
 is not a minification or bundler artifact (it reproduces unminified), not a
@@ -199,6 +200,27 @@ hydration race or measurement error (10s waits, 10 clicks, and 5 dispatch
 mechanisms, with the render still not taking effect), and not the
 `__VUE_PROD_DEVTOOLS__` runtime flag (a 2×2 codegen-by-flag factorial shows
 interactivity tracks the codegen, not the flag).
+
+## Apply the fix now
+
+Until this lands upstream, `patches/@vue__runtime-vapor@3.6.0-beta.16.patch` is the
+fix as a drop-in patch for the bundler build (`runtime-vapor.esm-bundler.js`) that
+Vite, Astro and Nuxt consume. Apply it in your own app — not in this repo, where it
+would un-break the reproduction.
+
+pnpm — copy the file into your app's `patches/` and add to `package.json`:
+
+```json
+"pnpm": {
+  "patchedDependencies": {
+    "@vue/runtime-vapor@3.6.0-beta.16": "patches/@vue__runtime-vapor@3.6.0-beta.16.patch"
+  }
+}
+```
+
+then `pnpm install`. For npm/yarn, `patch-package` applies the same diff. The patch
+is pinned to `3.6.0-beta.16`; regenerate it (`node confirm-fix.mjs` shows the exact
+edit) if you bump the runtime.
 
 ## Ruled out
 

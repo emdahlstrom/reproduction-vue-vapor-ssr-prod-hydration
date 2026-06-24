@@ -1,14 +1,17 @@
-// Decisive confirmation of the root cause. Builds the non-inline PRODUCTION app
-// UNMINIFIED, rewrites the one handleSetupResult branch in the built bundle to
-// restore the isBlock discriminator that __DEV__ gating strips, then drives a
-// real browser against both failure surfaces — hydration and fresh mount —
-// patched vs unpatched. Run after `pnpm install`:
+// Decisive confirmation of the root cause. Applies the proposed one-line fix to
+// the @vue/runtime-vapor SOURCE (where isBlock and proxyRefs still exist — both
+// are dead-code-eliminated from the built production bundle), rebuilds the
+// non-inline production app, and drives a real browser against both failure
+// surfaces — hydration and fresh mount — unpatched vs patched. Run after
+// `pnpm install`:
 //
 //   node confirm-fix.mjs
 //
-// If the single patch makes both surfaces interactive, handleSetupResult is the
-// cause, not a symptom. See README "Root cause".
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+// node_modules is backed up to a .orig file and restored in a finally block (and
+// self-healed from .orig at startup if a previous run was killed mid-patch). If
+// the single fix makes both surfaces interactive, handleSetupResult is the cause,
+// not a symptom. See README "Root cause".
+import { copyFileSync, existsSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
 import { extname, join, normalize, resolve } from 'node:path'
 import vue from '@vitejs/plugin-vue'
@@ -64,49 +67,41 @@ async function buildProdUnminified(outDir, input) {
     build: {
       outDir,
       emptyOutDir: true,
-      minify: false, // keep the runtime readable so the patch target is stable
+      minify: false,
       rollupOptions: { input: resolve(process.cwd(), input) },
     },
   })
 }
 
-// Vite can emit several JS chunks; pick the one that actually holds
-// handleSetupResult rather than assuming it is the first file.
-function bundleFile(outDir) {
-  const dir = join(outDir, 'assets')
-  const name = readdirSync(dir)
-    .filter((n) => n.endsWith('.js'))
-    .find((n) => STRIPPED.test(readFileSync(join(dir, n), 'utf8')))
-  if (!name) throw new Error(`no bundle under ${dir} contains handleSetupResult`)
-  return join(dir, name)
+// Locate @vue/runtime-vapor's bundler source (version hash is part of the path).
+function runtimeSource() {
+  const base = 'node_modules/.pnpm'
+  const dir = readdirSync(base).find((d) => d.startsWith('@vue+runtime-vapor@'))
+  if (!dir) throw new Error('@vue/runtime-vapor not found under node_modules/.pnpm — run pnpm install')
+  const f = join(base, dir, 'node_modules/@vue/runtime-vapor/dist/runtime-vapor.esm-bundler.js')
+  if (!existsSync(f)) throw new Error(`runtime source missing: ${f}`)
+  return f
 }
 
-// handleSetupResult in the production bundle, discriminator stripped. setup()
-// returns the bindings object, so setupResult !== EMPTY_OBJ, the first branch is
-// dead, and the bindings object is wrongly assigned as instance.block.
-const STRIPPED =
-  /if \(setupResult === EMPTY_OBJ && component\.render\) instance\.block = callRender\(component\.render, instance, setupResult\);\s*else instance\.block = setupResult;/
-
-// isBlock and proxyRefs are dead-code-eliminated from the prod bundle. Inline
-// isBlock's body (Array.isArray stands in for the absent isArray helper) and use
-// reactive for proxyRefs — same ref-unwrap-on-get/set behavior for this case.
-// isVaporComponent, isFragment, callRender and reactive all survive in the bundle.
-const PATCHED = `if (setupResult === EMPTY_OBJ && component.render) instance.block = callRender(component.render, instance, setupResult);
-\telse if (!(setupResult instanceof Node || Array.isArray(setupResult) || isVaporComponent(setupResult) || isFragment(setupResult)) && component.render) {
-\t\tinstance.setupState = reactive(setupResult);
+// In production, handleSetupResult collapses to the EMPTY_OBJ check + a bare else
+// that assigns the setup() bindings object as instance.block. The proposed fix
+// inserts the discriminator branch — the exact diff from README "Root cause".
+const TARGET =
+  /(\telse if \(setupResult === EMPTY_OBJ && component\.render\) instance\.block = callRender\(component\.render, instance, setupResult\);\n)(\telse instance\.block = setupResult;)/
+const FIX = `\telse if (!isBlock(setupResult) && component.render) {
+\t\tinstance.setupState = proxyRefs(setupResult);
 \t\tinstance.block = callRender(component.render, instance, instance.setupState);
 \t}
-\telse instance.block = setupResult;`
+`
 
-function patch(file) {
+function applyFix(file) {
   const src = readFileSync(file, 'utf8')
-  const matches = src.match(new RegExp(STRIPPED, 'g'))
-  if (!matches) throw new Error(`handleSetupResult shape not found in ${file}; the bundle changed — update STRIPPED.`)
-  if (matches.length !== 1) throw new Error(`expected exactly one handleSetupResult, found ${matches.length}`)
-  writeFileSync(file, src.replace(STRIPPED, PATCHED))
+  if (!TARGET.test(src)) throw new Error('handleSetupResult source shape changed; cannot apply the fix.')
+  writeFileSync(file, src.replace(TARGET, (_, head, tail) => head + FIX + tail))
 }
 
-async function run(outDir, page) {
+async function run(outDir, input, page) {
+  await buildProdUnminified(outDir, input)
   const srv = await serve(join(process.cwd(), outDir))
   const r = await probe(`http://127.0.0.1:${srv.port}${page}`)
   srv.close()
@@ -114,25 +109,36 @@ async function run(outDir, page) {
 }
 
 const surfaces = [
-  { label: 'hydration  (createVaporSSRApp, pre-rendered button)', input: 'index.html', page: '/' },
-  { label: 'fresh mount (createVaporApp, empty #app)', input: 'mount.html', page: '/mount.html' },
+  { label: 'hydration  (createVaporSSRApp, pre-rendered button)', input: 'index.html', page: '/', outDir: 'dist-fix-index' },
+  { label: 'fresh mount (createVaporApp, empty #app)', input: 'mount.html', page: '/mount.html', outDir: 'dist-fix-mount' },
 ]
 
+const rt = runtimeSource()
+const bak = `${rt}.orig`
+if (existsSync(bak)) copyFileSync(bak, rt) // self-heal a previous interrupted run
+copyFileSync(rt, bak)
+
 let ok = true
-for (const s of surfaces) {
-  const outDir = `dist-fix-${s.input.replace('.html', '')}`
-  await buildProdUnminified(outDir, s.input)
-  const before = await run(outDir, s.page)
-  patch(bundleFile(outDir))
-  const after = await run(outDir, s.page)
-  const pass = before.interactive === false && after.interactive === true && !after.error
-  ok &&= pass
-  console.log(`${pass ? '✓' : '✗'} ${s.label}`)
-  console.log(`    unpatched: interactive=${before.interactive} $evtclick=${before.evtclick}${before.error ? ` error=${before.error.split('\n')[0]}` : ''}`)
-  console.log(`    patched:   interactive=${after.interactive} $evtclick=${after.evtclick}${after.error ? ` error=${after.error.split('\n')[0]}` : ''}`)
+try {
+  const before = []
+  for (const s of surfaces) before.push(await run(s.outDir, s.input, s.page))
+  applyFix(rt)
+  const after = []
+  for (const s of surfaces) after.push(await run(s.outDir, s.input, s.page))
+
+  surfaces.forEach((s, i) => {
+    const pass = before[i].interactive === false && after[i].interactive === true && !after[i].error
+    ok &&= pass
+    console.log(`${pass ? '✓' : '✗'} ${s.label}`)
+    console.log(`    unpatched: interactive=${before[i].interactive} $evtclick=${before[i].evtclick}${before[i].error ? ` error=${before[i].error.split('\n')[0]}` : ''}`)
+    console.log(`    patched:   interactive=${after[i].interactive} $evtclick=${after[i].evtclick}${after[i].error ? ` error=${after[i].error.split('\n')[0]}` : ''}`)
+  })
+} finally {
+  copyFileSync(bak, rt)
+  rmSync(bak)
 }
 
 console.log(ok
-  ? '\nConfirmed: one handleSetupResult branch fixes both surfaces. Root cause, not symptom.'
+  ? '\nConfirmed: the one-line handleSetupResult fix makes both surfaces interactive. Root cause, not symptom.'
   : '\nUnexpected result.')
 process.exit(ok ? 0 : 1)

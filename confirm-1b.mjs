@@ -44,8 +44,9 @@ function patch(file, fixes) {
 async function probe(outDir) {
   await buildApp({ outDir, input: 'ref.html', minify: false }) // non-inline prod
   const srv = await serve(join(process.cwd(), outDir))
-  const browser = await chromium.launch()
+  let browser
   try {
+    browser = await chromium.launch()
     const page = await browser.newPage()
     const errors = []
     page.on('pageerror', (e) => errors.push(String(e)))
@@ -55,7 +56,7 @@ async function probe(outDir) {
     const text = button ? (await page.locator('button').textContent())?.trim() : null
     return { button, refValue: text, error: errors[0] || null }
   } finally {
-    await browser.close()
+    await browser?.close()
     srv.close()
   }
 }

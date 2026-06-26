@@ -10,7 +10,7 @@ import { build } from 'vite'
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
 
-function serve(root) {
+export function serve(root) {
   const server = http.createServer((req, res) => {
     const p = decodeURIComponent((req.url || '/').split('?')[0])
     const f = normalize(join(root, p === '/' ? '/index.html' : p))
@@ -28,7 +28,7 @@ function serve(root) {
 // emitted under its own basename (so the probe navigates to that path, not `/`).
 // configFile:false so each variant controls its own compile; vite.config.ts would
 // otherwise run the vue plugin twice.
-function buildApp({ outDir, input, inline = false, dev = false, minify = true }) {
+export function buildApp({ outDir, input, inline = false, dev = false, minify = true }) {
   return build({
     root: process.cwd(),
     configFile: false,

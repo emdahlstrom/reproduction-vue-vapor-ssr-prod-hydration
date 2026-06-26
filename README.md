@@ -12,7 +12,9 @@ the **production** Vue runtime, in two forms of the same bug:
 
 The inline compile (default `vite build`) and the development runtime are both
 interactive. The cause is one `__DEV__`-gated branch in `@vue/runtime-vapor`'s
-`handleSetupResult` ([Root cause](#root-cause)); the fix is in `patches/`.
+`handleSetupResult` ([Root cause](#root-cause)); the fix is in `patches/`. A second
+`__DEV__`-gated bug, in `setRef`, breaks setup-variable template refs once #1 is
+fixed (see *A second bug* below); the patch covers both.
 
 - `vue@3.6.0-beta.16` (`@vue/runtime-vapor@3.6.0-beta.16`)
 - `vite@8.1.0`, `@vitejs/plugin-vue@6.0.7`, node 24
@@ -22,7 +24,8 @@ interactive. The cause is one `__DEV__`-gated branch in `@vue/runtime-vapor`'s
 ```bash
 pnpm install
 pnpm verify          # builds 4 variants, drives each in headless Chromium, asserts
-node confirm-fix.mjs # applies the fix to the runtime, shows both surfaces recover
+node confirm-fix.mjs # patches the runtime, shows both #1 surfaces recover
+node confirm-1b.mjs  # shows the second bug: a setup-variable template ref (#1b)
 ```
 
 `pnpm verify` builds one component (`src/Counter.vue`) four ways and drives each
@@ -44,6 +47,14 @@ in a real browser:
 ✓ fresh mount (createVaporApp, empty #app)
     unpatched: interactive=false $evtclick=null error=TypeError: Cannot read properties of undefined (reading 'anchor')
     patched:   interactive=true $evtclick=function
+```
+
+`node confirm-1b.mjs` shows the second bug at three patch levels:
+
+```text
+✓ no fix           button=false el.value=— error=TypeError: Cannot read properties of undefined (reading 'anchor')
+✓ #1 only          button=true el.value=ref-null
+✓ #1 + #1b         button=true el.value=ref-ok
 ```
 
 By hand: `pnpm dev` (dev runtime, works) versus `pnpm build && pnpm preview`
@@ -119,12 +130,39 @@ become interactive, confirming the cause, not just describing the symptom. The
 branch plus `callRender` removes the crash and wires the handler; `proxyRefs` is
 independently needed for text reactivity.
 
+## A second bug: setup-variable template refs (`setRef`)
+
+The same `__DEV__`-DCE pattern hits `setRef` (`src/RefProbe.vue`: a vapor SFC with
+`const el = ref()` and `ref="el"`). In prod, `setRef` computes `setupState =
+__DEV__ ? instance.setupState || {} : null` and guards every `setupState[ref] =
+node` write with `__DEV__ && canSetSetupRef(ref)`. So a string template ref writes
+only to `instance.refs`, never to `setupState`, and `setupState[ref] = node`
+(through `proxyRefs`) is what sets the setup variable's `.value`. The result:
+`el.value` is `null` in `onMounted` on a non-inline prod build.
+
+It is masked by #1: until #1 is patched, `render()` never runs, so `setRef` never
+fires. `node confirm-1b.mjs` patches #1 first (the ref still comes back null), then
+adds the `setRef` fix and the ref resolves:
+
+| patch level | render runs | `el.value` in `onMounted` |
+|---|---|---|
+| no fix | no (fresh-mount crash) | — |
+| #1 only | yes | `null` |
+| #1 + #1b | yes | the `<button>` |
+
+**Fix.** Make `setupState` and `canSetSetupRef` live in prod and ungate the
+`setupState[ref]` writes (`__DEV__ && canSetSetupRef(ref)` → `canSetSetupRef(ref)`),
+same `__DEV__`-gate family as #1. The `patches/` diff covers both bugs.
+
 ## Apply the fix
 
-`patches/@vue__runtime-vapor@3.6.0-beta.16.patch` is the same diff as a drop-in
-patch for the bundler build (`runtime-vapor.esm-bundler.js`) that Vite, Astro and
-Nuxt consume. Apply it in your own app, not here, where it would un-break the
-reproduction. With pnpm, copy it into your app's `patches/`, then add:
+`patches/@vue__runtime-vapor@3.6.0-beta.16.patch` fixes **both** bugs (#1
+`handleSetupResult` and #1b `setRef`) in the bundler build
+(`runtime-vapor.esm-bundler.js`) that Vite, Astro and Nuxt consume. A client that
+bundles a different Vue build — e.g. an integration that redirects `vue` to the
+prebuilt browser runtime — must apply the same change to that file instead. Apply
+it in your own app, not here, where it would un-break the reproduction. With pnpm,
+copy it into your app's `patches/`, then add:
 
 ```json
 "pnpm": {

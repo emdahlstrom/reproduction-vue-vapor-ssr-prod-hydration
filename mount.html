@@ -5,9 +5,7 @@
     <title>Vue Vapor fresh-mount (no SSR) repro</title>
   </head>
   <body>
-    <!-- Empty container: no server-rendered markup, no hydration. src/mount.ts
-         mounts <Counter/> fresh with createVaporApp. On a non-inline production
-         build this throws instead of rendering. -->
+    <!-- Empty #app: mount.ts fresh-mounts <Counter/>; non-inline prod throws here. -->
     <div id="app"></div>
     <script type="module" src="/src/mount.ts"></script>
   </body>

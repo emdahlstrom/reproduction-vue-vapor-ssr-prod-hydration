@@ -5,8 +5,8 @@
     <title>Vue Vapor SSR prod-hydration repro</title>
   </head>
   <body>
-    <!-- #app holds the server-rendered output of <Counter/>, i.e. exactly what
-         @vue/server-renderer renderToString emits for it. main.ts hydrates it. -->
+    <!-- #app: the server-rendered output of <Counter/> (what renderToString emits);
+         main.ts hydrates it. -->
     <div id="app"><button type="button">count is 0</button></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

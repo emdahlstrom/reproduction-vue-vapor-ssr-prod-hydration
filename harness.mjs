@@ -1,20 +1,20 @@
-// Shared test harness for verify.mjs (reproduce) and confirm-fix.mjs (confirm the
-// fix): build a variant of the app, serve the output, drive it in a real browser,
-// and report what the counter button did.
+// Shared harness for verify.mjs (reproduce) and confirm.mjs (prove the fix): build
+// a variant of the app, serve it, drive it in a real browser, report what the
+// button did. Exposes buildServeProbe + interactive.
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import http from 'node:http'
-import { extname, join, normalize, resolve } from 'node:path'
+import { extname, join, normalize, resolve, sep } from 'node:path'
 import vue from '@vitejs/plugin-vue'
 import { chromium } from 'playwright'
 import { build } from 'vite'
 
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css' }
 
-export function serve(root) {
+function serve(root) {
   const server = http.createServer((req, res) => {
     const p = decodeURIComponent((req.url || '/').split('?')[0])
     const f = normalize(join(root, p === '/' ? '/index.html' : p))
-    if (!f.startsWith(root) || !existsSync(f) || statSync(f).isDirectory()) return res.writeHead(404).end()
+    if (!f.startsWith(root + sep) || !existsSync(f) || statSync(f).isDirectory()) return res.writeHead(404).end()
     res.writeHead(200, { 'content-type': MIME[extname(f)] || 'application/octet-stream' })
     res.end(readFileSync(f))
   })
@@ -24,11 +24,9 @@ export function serve(root) {
 }
 
 // inline=false → non-inline codegen (a separate render(), the case that breaks).
-// dev=true → load the development runtime (control). input → a custom html entry,
-// emitted under its own basename (so the probe navigates to that path, not `/`).
-// configFile:false so each variant controls its own compile; vite.config.ts would
-// otherwise run the vue plugin twice.
-export function buildApp({ outDir, input, inline = false, dev = false, minify = true }) {
+// dev=true → the development runtime (control). input → a custom html entry.
+// configFile:false so each variant controls its own compile.
+function buildApp({ outDir, input, inline = false, dev = false, minify = true }) {
   return build({
     root: process.cwd(),
     configFile: false,
@@ -39,6 +37,8 @@ export function buildApp({ outDir, input, inline = false, dev = false, minify = 
   })
 }
 
+// Read the button's text, click it, read it again. A crashed fresh mount renders
+// no button (before=null). $evtclick is the wired click handler, or undefined.
 async function probe(url) {
   const browser = await chromium.launch()
   try {
@@ -47,24 +47,20 @@ async function probe(url) {
     page.on('pageerror', (e) => errors.push(String(e)))
     await page.goto(url, { waitUntil: 'networkidle' })
     await page.waitForTimeout(150)
-    // A crashed fresh mount renders no button (mountApp clears #app, then throws).
-    if ((await page.locator('button').count()) === 0) {
-      return { before: null, after: null, evtclick: null, reactive: false, error: errors[0] || null }
-    }
-    const btn = page.getByRole('button', { name: /count is/ })
-    const before = (await btn.textContent())?.trim()
-    const evtclick = await btn.evaluate((el) => typeof el.$evtclick)
-    await btn.click()
+    const button = page.locator('button').first()
+    if ((await button.count()) === 0) return { before: null, after: null, evtclick: null, reactive: false, error: errors[0] || null }
+    const before = (await button.textContent())?.trim()
+    const evtclick = await button.evaluate((el) => typeof el.$evtclick)
+    await button.click()
     await page.waitForTimeout(100)
-    const after = (await btn.textContent())?.trim()
+    const after = (await button.textContent())?.trim()
     return { before, after, evtclick, reactive: before !== after, error: errors[0] || null }
   } finally {
     await browser.close()
   }
 }
 
-// Build a variant, serve it, probe the button.
-// Returns { before, after, evtclick, reactive, error }.
+// Build a variant, serve it, probe it. Returns { before, after, evtclick, reactive, error }.
 export async function buildServeProbe({ outDir, page = '/', ...opts }) {
   await buildApp({ outDir, ...opts })
   const srv = await serve(join(process.cwd(), outDir))
@@ -75,5 +71,5 @@ export async function buildServeProbe({ outDir, page = '/', ...opts }) {
   }
 }
 
-// Does a probe result show a working button (handler wired and reactive)?
+// A working button: handler wired and the click changed something.
 export const interactive = (r) => r.reactive === true && r.evtclick === 'function' && !r.error

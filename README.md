@@ -1,24 +1,20 @@
-# Vue Vapor: non-inline SSR component not interactive after hydration (production runtime)
+# Vue Vapor: non-inline component dead under the production runtime
 
-A `<script setup vapor>` component that is server-rendered and then hydrated is
-not interactive when both of these hold:
+A `<script setup vapor>` component compiled **non-inline** is not interactive on
+the **production** Vue runtime, in two forms of the same bug:
 
-1. the SFC is compiled with a non-inline render function, and
-2. the client loads the production Vue runtime.
+- **Hydrated** (`createVaporSSRApp`): the server-rendered `<button>` is adopted
+  with no mismatch but stays inert: `button.$evtclick` is `undefined`, clicks do
+  nothing.
+- **Fresh mount** (`createVaporApp`, empty container, no SSR): it throws
+  `TypeError: Cannot read properties of undefined (reading 'anchor')` and renders
+  no button.
 
-The server-rendered DOM is reused and hydration reports no mismatch, but the
-render never takes effect: the delegated click handler is not attached to the
-live node (`button.$evtclick` is `undefined`), so clicks do nothing. The default
-`vite build` (inline compile) works, and the development runtime works either way.
-
-This is not framework-specific. It reproduces with a plain
-`createVaporSSRApp(...).mount(...)` (what this repo uses) and also through the
-vDOM interop bridge (`createSSRApp(...).use(vaporInteropPlugin)`). Any vapor SSR
-setup is affected, pure-vapor (Nuxt-style) and vapor-island (Astro-style) alike.
-
-It surfaced while adding Vapor support to an Astro project. Reducing it to the
-pure-vapor case here showed the failure is in vapor SSR hydration itself, not in
-Astro.
+The inline compile (default `vite build`) and the development runtime are both
+interactive. The cause is one `__DEV__`-gated branch in `@vue/runtime-vapor`'s
+`handleSetupResult` ([Root cause](#root-cause)); the fix is in `patches/`. A second
+`__DEV__`-gated bug, in `setRef`, breaks setup-variable template refs once #1 is
+fixed (see *A second bug* below); the patch covers both.
 
 - `vue@3.6.0-beta.16` (`@vue/runtime-vapor@3.6.0-beta.16`)
 - `vite@8.1.0`, `@vitejs/plugin-vue@6.0.7`, node 24
@@ -27,134 +23,165 @@ Astro.
 
 ```bash
 pnpm install
-pnpm verify     # builds 3 variants, hydrates each in headless Chromium, asserts
+pnpm verify          # builds 4 variants, drives each in headless Chromium, asserts
+node confirm-fix.mjs # patches the runtime, shows both #1 surfaces recover
+node confirm-1b.mjs  # shows the second bug: a setup-variable template ref (#1b)
 ```
 
-Expected output:
+`pnpm verify` builds one component (`src/Counter.vue`) four ways and drives each
+in a real browser:
 
-```
-✓ non-inline + prod runtime  [the bug]: "count is 0" -> "count is 0"  $evtclick=undefined  reactive=false
-✓ inline + prod runtime: "count is 0" -> "count is 1"  $evtclick=function  reactive=true
-✓ non-inline + dev runtime (control): "count is 0" -> "count is 1"  $evtclick=function  reactive=true
-```
-
-By hand:
-
-```bash
-pnpm dev                      # open the page and interact: works (dev runtime)
-pnpm build && pnpm preview    # open the page and interact: dead (prod runtime)
+```text
+✓ non-inline + prod, hydration  [the bug]: "count is 0" -> "count is 0"  $evtclick=undefined  reactive=false
+✓ inline + prod, hydration: "count is 0" -> "count is 1"  $evtclick=function  reactive=true
+✓ non-inline + dev, hydration (control): "count is 0" -> "count is 1"  $evtclick=function  reactive=true
+✓ non-inline + prod, fresh mount [crashes, no SSR]: "null" -> "null"  $evtclick=null  reactive=false  error=TypeError: Cannot read properties of undefined (reading 'anchor')
 ```
 
-## What the page exercises
+`node confirm-fix.mjs` patches the runtime and re-checks both surfaces:
 
-One component, `src/Counter.vue`: a `<script setup vapor>` button that increments
-its own `ref` on click. `index.html` holds its server-rendered output (exactly
-what `@vue/server-renderer` `renderToString` emits for it). `src/main.ts`
-hydrates it with `createVaporSSRApp(Counter).mount('#app')`, pure vapor with no
-vDOM host. Vue reports no hydration mismatch, so the markup matches what the
-client renders.
+```text
+✓ hydration  (createVaporSSRApp, pre-rendered button)
+    unpatched: interactive=false $evtclick=undefined
+    patched:   interactive=true $evtclick=function
+✓ fresh mount (createVaporApp, empty #app)
+    unpatched: interactive=false $evtclick=null error=TypeError: Cannot read properties of undefined (reading 'anchor')
+    patched:   interactive=true $evtclick=function
+```
 
-Under the bug the button is inert: clicking does nothing and `button.$evtclick`
-is `undefined`. The dev runtime and the inline build both make it interactive.
+`node confirm-1b.mjs` shows the second bug at three patch levels:
 
-The same failure occurs through the vDOM interop bridge, where a vapor component
-is mounted inside a vDOM app via `createSSRApp` + `vaporInteropPlugin` (how Astro
-islands and incremental vDOM-plus-vapor apps mount). So the trigger is the vapor
-component, not the surrounding app. A related variant with a parent that computes
-a sum over child checkboxes showed the parent sum, the child's own state, and a
-standalone counter all freeze together while only a checkbox's native `checked`
-toggle flipped: one inert component tree, not a propagation-specific bug. It is
-in git history (commit `35cef9c`).
+```text
+✓ no fix           button=false el.value=— error=TypeError: Cannot read properties of undefined (reading 'anchor')
+✓ #1 only          button=true el.value=ref-null
+✓ #1 + #1b         button=true el.value=ref-ok
+```
+
+By hand: `pnpm dev` (dev runtime, works) versus `pnpm build && pnpm preview`
+(prod runtime, dead).
 
 ## The trigger: inline vs non-inline compilation
 
-The broken and working builds differ in one thing: how `@vitejs/plugin-vue`
-compiles the template. Inline folds the template into `setup()`; non-inline emits
-a separate `render()` function. The plugin inlines only when
-`isUseInlineTemplate` is true, which requires
-`!devServer && !devToolsEnabled && <script setup> && no template src`.
-
-This repo forces non-inline with `features: { prodDevtools: true }`
-(`vite.config.ts`), since `prodDevtools` flips `devToolsEnabled`.
-
-Real production builds reach non-inline for other reasons too. An Astro build,
-for instance, runs the plugin with `options.devServer` truthy, so it emits
-non-inline output for every Vue component. Either way the compiled output is
-non-inline, and the failure is in the runtime, not the compiler.
-
-Compiled output (minified), production build.
-
-Non-inline (broken). The template is cloned and the handler attached in a
-separate render function:
+`@vitejs/plugin-vue` folds the template into `setup()` only when
+`isUseInlineTemplate` holds (`!devServer && !devToolsEnabled && <script setup> &&
+no template src`); otherwise it emits a **separate `render()`**. This repo forces
+non-inline with `features: { prodDevtools: true }` (`vite.config.ts`). Production
+builds reach non-inline for other reasons too: an Astro build runs the plugin
+with `options.devServer` truthy, so every component is non-inline. Same output;
+the failure is in the runtime, not the compiler.
 
 ```js
-delegateEvents("click");
-function render(e, ...) {
-  let a = template(), o = child(a);
-  return a.$evtclick = createInvoker(() => e.count++),   // handler on `a`
-         renderEffect(() => setText(o, "count is " + e.count)),
-         a;
+// non-inline (broken): the click handler is attached inside a separate render()
+function render(_ctx) {
+  const a = template(), o = child(a)
+  a.$evtclick = createInvoker(() => _ctx.count++)
+  renderEffect(() => setText(o, "count is " + _ctx.count))
+  return a
+}
+// inline (works): the click handler is attached inside setup()
+setup() {
+  const count = ref(0), n = template(), r = child(n)
+  n.$evtclick = createInvoker(() => count.value++)
+  renderEffect(() => setText(r, "count is " + count.value))
+  return n
 }
 ```
 
-Inline (works). The template is cloned and the handler attached inside `setup()`:
+## Root cause
+
+A non-inline `setup()` returns the bindings object (`{ count }`), not a DOM
+block, and the template compiles to a separate `render()`. `handleSetupResult`
+wires bindings to render only through `devRender()`, inside
+`if (__DEV__ && !isBlock(setupResult)) { … }`. With `__DEV__ = false` that whole
+branch (discriminator and all) is dead-code-eliminated, leaving:
 
 ```js
-setup(e) {
-  let t = ref(0), n = template(), r = child(n);
-  return n.$evtclick = createInvoker(() => t.value++),    // handler on `n`
-         renderEffect(() => setText(r, "count is " + t.value)),
-         n;
+// @vue/runtime-vapor handleSetupResult, production
+if (setupResult === EMPTY_OBJ && component.render)
+  instance.block = callRender(component.render, instance, setupResult)
+else
+  instance.block = setupResult   // ← the bindings object, not a block
+```
+
+`setupResult` is the non-empty `{ count }`, so the first branch is dead and the
+bindings object is assigned as `instance.block`; `render()` never runs. Inline
+builds escape because their `setup()` returns `EMPTY_OBJ` and hits the first
+branch. The deepest cause is that the `isBlock(setupResult)` discriminator, the
+only thing that separates "setup returned a DOM block" from "setup returned
+bindings + a separate render", lives inside the `__DEV__` gate, so production
+cannot tell them apart.
+
+`mountComponent` then forks on `if (!isHydrating)`: hydration skips the insert and
+leaves the SSR `<button>` inert; a fresh mount inserts the bad block, `insert()`
+reads `.anchor` off the bindings object, and throws.
+
+**Fix.** Restore the discriminator outside the `__DEV__` gate:
+
+```js
+else if (!isBlock(setupResult) && component.render) {
+  instance.setupState = proxyRefs(setupResult)
+  instance.block = callRender(component.render, instance, instance.setupState)
 }
 ```
 
-## Mechanism
+`node confirm-fix.mjs` applies exactly this to the `@vue/runtime-vapor` source
+(backing up and restoring `node_modules`), rebuilds, and shows both surfaces
+become interactive, confirming the cause, not just describing the symptom. The
+branch plus `callRender` removes the crash and wires the handler; `proxyRefs` is
+independently needed for text reactivity.
 
-On the production runtime the non-inline component's render never takes effect
-during hydration. Instrumenting the interop variant (an
-`Object.prototype.$evtclick` setter plus logging inside the compiled render and
-the runtime's `template()` helper) showed the separate `render()` is never
-entered and no `$evtclick` is assigned to any node. The pure-vapor variant shows
-the same end state: the SSR node is adopted (no mismatch) but stays inert, with
-`$evtclick` undefined.
+## A second bug: setup-variable template refs (`setRef`)
 
-- non-inline + prod: the render is not effective, so no handler and no reactive
-  update. The server `<button>` is untouched and has no `$evtclick`.
-- inline + prod: `setup()` runs during hydration, the template helper adopts the
-  live SSR `<button>`, and `$evtclick` is set on that live node, so it is
-  interactive.
-- non-inline + dev (control): the same non-inline output hydrates and is
-  interactive.
+The same `__DEV__`-DCE pattern hits `setRef` (`src/RefProbe.vue`: a vapor SFC with
+`const el = ref()` and `ref="el"`). In prod, `setRef` computes `setupState =
+__DEV__ ? instance.setupState || {} : null` and guards every `setupState[ref] =
+node` write with `__DEV__ && canSetSetupRef(ref)`. So a string template ref writes
+only to `instance.refs`, never to `setupState`, and `setupState[ref] = node`
+(through `proxyRefs`) is what sets the setup variable's `.value`. The result:
+`el.value` is `null` in `onMounted` on a non-inline prod build.
 
-The divergence is `__DEV__`-gated in `@vue/runtime-vapor`'s hydration path: with
-`__DEV__=false` a non-inline vapor component's render is not applied during
-hydration. We did not pinpoint the exact runtime branch; the above is observed
-via instrumentation, not inferred.
+It is masked by #1: until #1 is patched, `render()` never runs, so `setRef` never
+fires. `node confirm-1b.mjs` patches #1 first (the ref still comes back null), then
+adds the `setRef` fix and the ref resolves:
 
-An adversarial review tried to break this finding and could not. It is not a
-minification or bundler artifact (it reproduces unminified), not a hydration race
-or measurement error (10s waits, 10 clicks, and 5 dispatch mechanisms, with the
-render still not taking effect), and not the `__VUE_PROD_DEVTOOLS__` runtime flag
-(a 2×2 codegen-by-flag factorial shows interactivity tracks the codegen, not the
-flag).
+| patch level | render runs | `el.value` in `onMounted` |
+|---|---|---|
+| no fix | no (fresh-mount crash) | — |
+| #1 only | yes | `null` |
+| #1 + #1b | yes | the `<button>` |
 
-## Ruled out
+**Fix.** Make `setupState` and `canSetSetupRef` live in prod and ungate the
+`setupState[ref]` writes (`__DEV__ && canSetSetupRef(ref)` → `canSetSetupRef(ref)`),
+same `__DEV__`-gate family as #1. The `patches/` diff covers both bugs.
 
-Each of these hydrates and stays interactive on its own in a real browser, so
-none is the trigger:
+## Apply the fix
 
-- the vDOM interop bridge: the bug reproduces with and without it (pure
-  `createVaporSSRApp` fails the same way)
-- the prebuilt `vue.runtime-with-vapor.esm-browser.prod.js` versus the bundler
-  `vue` (both fine with inline)
-- static versus dynamic import of the runtime
-- a single shared runtime copy (no dual-instance involved)
+`patches/@vue__runtime-vapor@3.6.0-beta.16.patch` fixes **both** bugs (#1
+`handleSetupResult` and #1b `setRef`) in the bundler build
+(`runtime-vapor.esm-bundler.js`) that Vite, Astro and Nuxt consume. A client that
+bundles a different Vue build — e.g. an integration that redirects `vue` to the
+prebuilt browser runtime — must apply the same change to that file instead. Apply
+it in your own app, not here, where it would un-break the reproduction. With pnpm,
+copy it into your app's `patches/`, then add:
 
-Flipping only the compile mode to inline, with the same runtime, markup, and
-mount, fixes it.
+```json
+"pnpm": {
+  "patchedDependencies": {
+    "@vue/runtime-vapor@3.6.0-beta.16": "patches/@vue__runtime-vapor@3.6.0-beta.16.patch"
+  }
+}
+```
+
+then `pnpm install` (npm/yarn: `patch-package`). The patch is pinned to
+`3.6.0-beta.16`; regenerate it for other versions.
 
 ## Notes
 
-- `happy-dom`/`jsdom` is not a reliable oracle here. It reports the inline build
-  as broken too, which a real browser does not. Use a browser, as `pnpm verify`
-  does.
+- Verified in a real browser. `happy-dom`/`jsdom` are not reliable oracles here:
+  they report the inline build as broken too, which a real browser does not.
+- It is not a measurement artifact. It reproduces unminified, survives long waits
+  and repeated clicks, and is independent of `__VUE_PROD_DEVTOOLS__` (interactivity
+  tracks the codegen, not the flag). It is not specific to the vDOM interop bridge
+  (`createSSRApp` + `vaporInteropPlugin`); pure `createVaporSSRApp` fails
+  identically. Flipping only the compile mode to inline, with the same runtime and
+  markup, fixes it.

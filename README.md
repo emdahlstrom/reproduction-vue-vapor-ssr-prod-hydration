@@ -16,7 +16,7 @@ interactive. The cause is one `__DEV__`-gated branch in `@vue/runtime-vapor`'s
 `__DEV__`-gated bug, in `setRef`, breaks setup-variable template refs once #1 is
 fixed (see *A second bug* below); the patch covers both.
 
-- `vue@3.6.0-beta.16` (`@vue/runtime-vapor@3.6.0-beta.16`)
+- `vue@3.6.0-beta.17` (`@vue/runtime-vapor@3.6.0-beta.17`)
 - `vite@8.1.0`, `@vitejs/plugin-vue@6.0.7`, node 24
 
 ## Reproduce
@@ -156,7 +156,7 @@ same `__DEV__`-gate family as #1. The `patches/` diff covers both bugs.
 
 ## Apply the fix
 
-`patches/@vue__runtime-vapor@3.6.0-beta.16.patch` fixes **both** bugs (#1
+`patches/@vue__runtime-vapor@3.6.0-beta.17.patch` fixes **both** bugs (#1
 `handleSetupResult` and #1b `setRef`) in the bundler build
 (`runtime-vapor.esm-bundler.js`) that Vite, Astro and Nuxt consume. A client that
 bundles a different Vue build — e.g. an integration that redirects `vue` to the
@@ -167,13 +167,13 @@ copy it into your app's `patches/`, then add:
 ```json
 "pnpm": {
   "patchedDependencies": {
-    "@vue/runtime-vapor@3.6.0-beta.16": "patches/@vue__runtime-vapor@3.6.0-beta.16.patch"
+    "@vue/runtime-vapor@3.6.0-beta.17": "patches/@vue__runtime-vapor@3.6.0-beta.17.patch"
   }
 }
 ```
 
 then `pnpm install` (npm/yarn: `patch-package`). The patch is pinned to
-`3.6.0-beta.16`; regenerate it for other versions.
+`3.6.0-beta.17`; regenerate it for other versions.
 
 ## Notes
 

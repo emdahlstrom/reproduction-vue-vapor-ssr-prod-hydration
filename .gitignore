@@ -1,9 +1,12 @@
 node_modules
+
+# Build outputs (verify.mjs / confirm-*.mjs emit dist-<variant> dirs)
 dist
-dist-inline
-dist-noninline
-dist-noninline-dev
-dist-noninline-mount
-dist-fix-*
-dist-1b
+dist-*
+*-unminified
+.vite
+
+# Local agent worktrees
+.claude/
+
 *.log

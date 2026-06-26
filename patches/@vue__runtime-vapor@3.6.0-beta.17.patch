@@ -1,7 +1,7 @@
 diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.js
 --- a/dist/runtime-vapor.esm-bundler.js
 +++ b/dist/runtime-vapor.esm-bundler.js
-@@ -2940,6 +2940,10 @@
+@@ -3000,6 +3000,10 @@
  		devRender(instance);
  	}
  	else if (setupResult === EMPTY_OBJ && component.render) instance.block = callRender(component.render, instance, setupResult);
@@ -12,7 +12,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  	else instance.block = setupResult;
  	if (instance.hasFallthrough && component.inheritAttrs !== false && Object.keys(instance.attrs).length) {
  		const getFallthroughAttrs = isFunction(component) && !(isTransitionEnabled ? isVaporTransition(component) : false) ? () => getFunctionalFallthrough(instance.attrs) : () => instance.attrs;
-@@ -6384,7 +6388,7 @@
+@@ -6442,7 +6446,7 @@
  */
  function setRef$1(instance, el, ref, oldRef, refFor = false, refKey, oldRefKey) {
  	if (!instance || instance.isUnmounted) return;
@@ -21,7 +21,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  	const refValue = getRefValue(el);
  	if (isInteropEnabled) {
  		const target = isFragment(el) && el.setRef ? el : refValue && isFragment(refValue) && refValue.setRef ? refValue : null;
-@@ -6394,7 +6398,7 @@
+@@ -6452,7 +6456,7 @@
  		}
  	}
  	const refs = instance.refs === EMPTY_OBJ ? instance.refs = {} : instance.refs;
@@ -30,7 +30,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  	const canSetRef = (ref, key) => {
  		if (!!(process.env.NODE_ENV !== "production") && knownTemplateRefs.has(ref)) return false;
  		if (key && isTemplateRefKey(refs, key)) return false;
-@@ -6404,7 +6408,7 @@
+@@ -6462,7 +6466,7 @@
  		invalidatePendingRef(el);
  		if (isString(oldRef)) {
  			refs[oldRef] = null;
@@ -39,7 +39,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  		} else if (isRef$1(oldRef)) {
  			if (canSetRef(oldRef, oldRefKey)) oldRef.value = null;
  			if (oldRefKey) refs[oldRefKey] = null;
-@@ -6428,12 +6432,12 @@
+@@ -6486,12 +6490,12 @@
  			const doSet = () => {
  				if (refFor) {
  					if (refValue == null) return;
@@ -54,7 +54,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  								setupState[ref] = refs[ref];
  								existing = setupState[ref];
  							}
-@@ -6444,7 +6448,7 @@
+@@ -6502,7 +6506,7 @@
  					} else if (!existing.includes(refValue)) existing.push(refValue);
  				} else if (_isString) {
  					refs[ref] = refValue;
@@ -63,7 +63,7 @@ diff --git a/dist/runtime-vapor.esm-bundler.js b/dist/runtime-vapor.esm-bundler.
  				} else if (_isRef) {
  					if (canSetRef(ref, refKey)) ref.value = refValue;
  					if (refKey) refs[refKey] = refValue;
-@@ -6456,7 +6460,7 @@
+@@ -6514,7 +6518,7 @@
  					if (isArray(existing)) remove$1(existing, refValue);
  				} else if (_isString) {
  					refs[ref] = null;

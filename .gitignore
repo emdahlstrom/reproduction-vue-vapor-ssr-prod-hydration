@@ -6,7 +6,4 @@ dist-*
 *-unminified
 .vite
 
-# Local agent worktrees
-.claude/
-
 *.log
